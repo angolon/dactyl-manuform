@@ -20,7 +20,7 @@
 (def β (/ π 36))                        ; curvature of the rows
 (def centerrow (- nrows 3))             ; controls front-back tilt
 (def centercol 4)                       ; controls left-right tilt / tenting (higher number is more tenting)
-(def tenting-angle (/ π 4))            ; or, change this for more precise tenting control
+(def tenting-angle (/ π 9))            ; or, change this for more precise tenting control
 (def column-style
   (if (> nrows 5) :orthographic :standard))  ; options include :standard, :orthographic, and :fixed
 ; (def column-style :fixed)
@@ -46,10 +46,16 @@
 ;;   http://patentimages.storage.googleapis.com/EP0219944A2/imgf0002.png
 ;; Fixed-z overrides the z portion of the column ofsets above.
 ;; NOTE: THIS DOESN'T WORK QUITE LIKE I'D HOPED.
-; (def fixed-angles [(deg2rad 10) (deg2rad 10) 0 0 0 (deg2rad -15) (deg2rad -15)])
-; (def fixed-x [-41.5 -22.5 0 20.3 41.4 65.5 89.6])  ; relative to the middle finger
-; (def fixed-z [12.1    8.3 0  5   10.7 14.5 17.5])
-; (def fixed-tenting (deg2rad 0))
+(def fixed-angles [(deg2rad 10) (deg2rad 10) 0 0 0 (deg2rad -15) (deg2rad -15)])
+(def fixed-x [-41.5 -22.5 0 20.3 41.4 65.5 89.6])  ; relative to the middle finger
+(def fixed-z [12.1    8.3 0  5   10.7 14.5 17.5])
+(def fixed-tenting (deg2rad 0))
+
+; Angus' hax variables
+(def pcb-z-clearance 5)
+(def pcb-thickness 3)
+(def pcb-key-width mount-width)
+(def pcb-key-height mount-height)
 
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;; General variables ;;
@@ -94,10 +100,6 @@
                 (mirror [1 0 0])
                 (mirror [0 1 0])))))
 
-;;;;;;;;;;;;;;;;
-;; SA Keycaps ;;
-;;;;;;;;;;;;;;;;
-
 (def sa-length 18.25)
 (def sa-double-length 37.5)
 (def sa-cap {1 (let [bl2 (/ 18.5 2)
@@ -137,6 +139,19 @@
                         (translate [0 0 (+ 5 plate-thickness)])
                         (color [240/255 223/255 175/255 1])))})
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; PCB shapes and offset functions ;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Shape of the flat section of the pcb for each key
+(def single-key-pcb
+  (cube pcb-key-width pcb-key-height pcb-thickness)
+  )
+
+;; translate a pcb shape down in the z-axis. Do this BEFORE
+;; placing relative to a key?
+(defn pcb-offset [shape-fn]
+        (translate [0 0 (- pcb-z-clearance)] shape-fn))
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Placement Functions ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -221,6 +236,16 @@
            (->> single-plate
                 (key-place column row)))))
 
+(def key-pcb-mould
+  (apply union
+         (for [column columns
+               row rows
+               :when (or (.contains [2 3] column)
+                         (not= row lastrow))]
+           (->> single-key-pcb
+                (pcb-offset)
+                (key-place column row)))))
+
 (def caps
   (apply union
          (for [column columns
@@ -283,6 +308,68 @@
              (key-place column (inc row) web-post-tr)
              (key-place (inc column) row web-post-bl)
              (key-place (inc column) (inc row) web-post-tl))))))
+
+;; More of my hacks: connectors for the key pcb squares.
+
+(def pcb-web-thickness pcb-thickness)
+(def pcb-post-size 0.1)
+(def pcb-web-post (->> (cube pcb-post-size pcb-post-size pcb-web-thickness)
+                   (translate [0 0 (- pcb-z-clearance)])))
+
+(def pcb-post-adj (/ pcb-post-size 2))
+(def pcb-web-post-tr
+  (translate
+    [(- (/ pcb-key-width 2) pcb-post-adj)
+     (- (/ pcb-key-height 2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def pcb-web-post-tl
+  (translate
+    [(+ (/ pcb-key-width -2) pcb-post-adj)
+     (- (/ pcb-key-height 2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def pcb-web-post-bl
+  (translate
+    [(+ (/ pcb-key-width -2) pcb-post-adj)
+     (+ (/ pcb-key-height -2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def pcb-web-post-br
+  (translate
+    [(- (/ pcb-key-width 2) pcb-post-adj)
+     (+ (/ pcb-key-height -2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def key-pcb-connectors
+    (apply union
+           (concat
+            ;; Row connections
+            (for [column (range 0 (dec ncols))
+                  row (range 0 lastrow)]
+              (triangle-hulls
+               (key-place (inc column) row pcb-web-post-tl)
+               (key-place column row pcb-web-post-tr)
+               (key-place (inc column) row pcb-web-post-bl)
+               (key-place column row pcb-web-post-br)))
+
+            ;; Column connections
+            (for [column columns
+                  row (range 0 cornerrow)]
+              (triangle-hulls
+               (key-place column row pcb-web-post-bl)
+               (key-place column row pcb-web-post-br)
+               (key-place column (inc row) pcb-web-post-tl)
+               (key-place column (inc row) pcb-web-post-tr)))
+
+            ;; Diagonal connections
+            (for [column (range 0 (dec ncols))
+                  row (range 0 cornerrow)]
+              (triangle-hulls
+               (key-place column row pcb-web-post-br)
+               (key-place column (inc row) pcb-web-post-tr)
+               (key-place (inc column) row pcb-web-post-bl)
+               (key-place (inc column) (inc row) pcb-web-post-tl))))))
 
 ;;;;;;;;;;;;
 ;; Thumbs ;;
@@ -377,6 +464,12 @@
    (thumb-1x-layout single-plate)
    (thumb-15x-layout single-plate)
    (thumb-15x-layout larger-plate)
+   ))
+
+(def pcb-thumb
+  (union
+   (thumb-1x-layout single-key-pcb)
+   (thumb-15x-layout single-key-pcb)
    ))
 
 (def thumb-post-tr (translate [(- (/ mount-width 2) post-adj)  (- (/ mount-height  1.15) post-adj) 0] web-post))
@@ -712,6 +805,18 @@
                     )
                    (translate [0 0 -20] (cube 350 350 40))
                   ))
+
+; My Hacks: a template for moulding a PCB, maybe?
+(def model-pcb-mould-right (union
+                       key-holes
+                       key-pcb-mould
+                       key-pcb-connectors
+                       pcb-thumb
+                       thumb
+                       ))
+                       
+(spit "things/right-pcb-mould.scad"
+      (write-scad model-pcb-mould-right))
 
 (spit "things/right.scad"
       (write-scad model-right))
