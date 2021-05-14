@@ -3,7 +3,9 @@
   (:require [clojure.core.matrix :refer [array matrix mmul]]
             [scad-clj.scad :refer :all]
             [scad-clj.model :refer :all]
-            [unicode-math.core :refer :all]))
+            [unicode-math.core :refer :all]
+            [euclidean.math.vector :as v]
+            ))
 
 
 (defn deg2rad [degrees]
@@ -54,8 +56,6 @@
 ; Angus' hax variables
 (def pcb-z-clearance 5)
 (def pcb-thickness 3)
-(def pcb-key-width mount-width)
-(def pcb-key-height mount-height)
 
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;; General variables ;;
@@ -77,6 +77,8 @@
 (def plate-thickness 4)
 (def mount-width (+ keyswitch-width 3))
 (def mount-height (+ keyswitch-height 3))
+(def pcb-key-width mount-width)
+(def pcb-key-height mount-height)
 
 (def single-plate
   (let [top-wall (->> (cube (+ keyswitch-width 3) 1.5 plate-thickness)
@@ -806,12 +808,77 @@
                    (translate [0 0 -20] (cube 350 350 40))
                   ))
 
+;;;;;;;;;;;;;;;;;
+;; Thumb Hacks ;;
+;;;;;;;;;;;;;;;;;
+(def thumb-length 78)
+(def thumb-column-radius thumb-length)
+(def thumb-row-radius thumb-length)
+(def thumb-start-angle (/ π 4)) ; offset row count for rotation, because thumbs are... steeper.
+
+; Angle of chord on a circle of the given radius.
+(defn chord-θ [radius chord-length]
+  (->> radius
+       (* 2)
+       (/ chord-length)
+       (Math/asin)
+       (* 2)
+       ))
+
+(def thumb-row-circumference (* 2 π thumb-row-radius))
+(def thumb-column-circumference (* 2 π thumb-column-radius))
+
+; embeds the shape in the perimeter of a circle on the plane with the given radius.
+; TODO: shoud we rotate the shape into the orientation around the correct axis in this
+; function, or leave that up to the caller? ⁻\_(ツ)_/⁻
+(defn circle-embed [plane-normal circle-origin-normal radius chord-length index shape]
+  (let [θ (chord-θ radius chord-length)
+        to-origin (v/scale circle-origin-normal radius)]
+    (->> shape
+         (translate to-origin)
+         (rotate (* θ index) plane-normal)
+         )))
+
+(defn thumb-place [column row shape]
+  (let [
+        β (chord-θ thumb-row-radius mount-width)
+        ]
+    (->> shape
+         (translate [0, 0, (- thumb-row-radius)])
+         (rotate (+ (* β row) thumb-start-angle) [1 0 0]) 
+         ; (translate [0 0 row-radius])
+         ; (translate [0 0 (- column-radius)])
+         ; (rotate (* column β) [0 1 0])
+         ; (translate [0 0 column-radius])
+         ; (translate [mount-width 0 0])
+         ; (rotate (* π (- 1/4 3/16)) [0 0 1])
+         ; (rotate (/ π 12) [1 1 0])
+         ; (translate [-52 -45 40])
+       )))
+
+(def thumb-cluster
+  (let [plane1 (v/vector 1 0 0)
+        plane1-origin (v/vector 0 0 -1)
+        plane2 (v/normalize (v/vector 1 1 0))
+        plane2-origin (v/vector 0 0 1)]
+    (apply union
+           (concat
+             ; (for [row rows] (thumb-place 0 row single-key-pcb))
+             (for [row (range 0 28)]
+               (circle-embed plane1 plane1-origin thumb-row-radius mount-width row single-key-pcb))
+             (for [row (range 0 12)]
+               (->> single-key-pcb
+                    (rotate (/ π 4) [0 0 1])
+                    (circle-embed plane2 plane2-origin 35 mount-width row)))
+             ))))
+
 ; My Hacks: a template for moulding a PCB, maybe?
 (def model-pcb-mould-right (union
                        key-holes
                        key-pcb-mould
                        key-pcb-connectors
                        pcb-thumb
+                       thumb-cluster
                        thumb
                        ))
                        
