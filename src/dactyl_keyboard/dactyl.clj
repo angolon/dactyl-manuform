@@ -5,6 +5,7 @@
             [scad-clj.model :refer :all]
             [unicode-math.core :refer :all]
             [euclidean.math.vector :as v]
+            [euclidean.math.quaternion :as q]
             ))
 
 
@@ -828,16 +829,132 @@
 (def thumb-row-circumference (* 2 π thumb-row-radius))
 (def thumb-column-circumference (* 2 π thumb-column-radius))
 
+(def x-axis (v/vector 1 0 0))
+(def y-axis (v/vector 0 1 0))
+(def z-axis (v/vector 0 0 1))
+
+(defn angle-between [v1 v2]
+  (->> (v/cross (v/normalize v1) (v/normalize v2))
+       (v/magnitude)
+       (Math/asin)
+       ))
+
+(def angle-to-x (partial angle-between x-axis))
+(def angle-to-y (partial angle-between y-axis))
+(def angle-to-z (partial angle-between z-axis))
+
+(defn rotate-to [axis normal]
+  (let [c (v/cross (v/normalize axis) (v/normalize normal)) ; just in case ;-)
+        θ (->> c (v/magnitude) (Math/asin))]
+    (partial rotate θ c)
+    ))
+
+(defn rotate-to-vector [axis normal vv]
+  (let [c (v/cross (v/normalize axis) (v/normalize normal)) ; just in case ;-)
+        θ (->> c (v/magnitude) (Math/asin))
+        rotation (q/from-angle-axis θ c)]
+    (q/rotate rotation vv)
+    ))
+
+; Algorithm to find a perpendicular vector thanks to:
+; https://math.stackexchange.com/a/413235
+; I have no fucking idea what I'm doing ⁻\_(ツ)_/⁻
+(defn perpendicular-vector [v]
+  (let [m-index (->> v
+                     (map-indexed (fn [i vi] {:index i :non-zero (not= vi 0.0)}))
+                     (filter (fn [x] (get x :non-zero)))
+                     first
+                     (#(get % :index)))
+        n-index (mod (+ m-index 1) 3)
+        o-index (mod (+ n-index 1) 3)
+        perpendicular-v {m-index (- (get v n-index))
+                         n-index (get v m-index)
+                         o-index 0.0
+                         }]
+    (v/into-vector (for [i (range 0 3)] (get perpendicular-v i)))
+    ))
+
+(defn rotate-to-v [axis normal]
+  (let [c (v/cross (v/normalize axis) (v/normalize normal)) ; just in case ;-)
+        θ (->> c (v/magnitude) (Math/asin))
+        rotation (q/from-angle-axis θ c)
+        u (q/rotate rotation normal)
+        m-index (->> u
+                     (map-indexed (fn [i vi] {:index i :non-zero (not= vi 0.0)}))
+                     (filter (fn [x] (get x :non-zero)))
+                     first
+                     (#(get % :index)))
+        n-index (mod (+ m-index 1) 3)
+        o-index (mod (+ n-index 1) 3)
+        perpendicular-v {m-index (- (get u n-index))
+                         n-index (get u m-index)
+                         o-index 0.0
+                         }]
+    (for [i (range 0 3)] (get perpendicular-v i))
+    ))
+
+(def rotate-to-x (partial rotate-to x-axis))
+(def rotate-to-y (partial rotate-to y-axis))
+(def rotate-to-z (partial rotate-to z-axis))
+
+(defn circle-embed-plane [plane-normal radius]
+  (let [next-axis (rotate-to-v x-axis plane-normal)]
+  ; (->> (cylinder radius 1)
+  (->> (cube (* 2 radius) 1 1)
+       ((rotate-to-x plane-normal))
+       ; (rotate (/ π 4) next-axis)
+       ; ((rotate-to-y plane-normal))
+       ; ((rotate-to-z plane-normal))
+       )))
+
 ; embeds the shape in the perimeter of a circle on the plane with the given radius.
 ; TODO: shoud we rotate the shape into the orientation around the correct axis in this
 ; function, or leave that up to the caller? ⁻\_(ツ)_/⁻
 (defn circle-embed [plane-normal circle-origin-normal radius chord-length index shape]
   (let [θ (chord-θ radius chord-length)
-        to-origin (v/scale circle-origin-normal radius)]
+        to-origin (v/scale circle-origin-normal radius)
+        rot-y-axis-1 (rotate-to-vector x-axis plane-normal y-axis)
+        rot-z-axis-1 (rotate-to-vector x-axis plane-normal z-axis)
+        rot-z-axis-2 (rotate-to-vector rot-y-axis-1 plane-normal rot-z-axis-1)]
     (->> shape
+         (plane-align plane-normal)
+         ; ((rotate-to rot-y-axis-1 plane-normal))
+         ; ((rotate-to rot-z-axis-2 plane-normal))
          (translate to-origin)
          (rotate (* θ index) plane-normal)
          )))
+
+(defn plane-align [plane-normal shape]
+  (let [x-y-projection (v/vector (get plane-normal 0) (get plane-normal 1) 0)
+        yaw (angle-between x-axis x-y-projection)
+        yaw-q (q/from-angle-axis yaw z-axis)
+        y-z-projection (v/vector 0 (get plane-normal 1) (get plane-normal 2))
+        pitch (angle-between y-axis y-z-projection)
+        x-z-projection (v/vector (get plane-normal 0) 0 (get plane-normal 2))
+        roll (angle-between z-axis x-z-projection)
+        yawed-y-axis (q/rotate yaw-q y-axis)
+        yawed-x-axis (q/rotate yaw-q x-axis)
+        ; z axis doesn't change during yaw.
+        pitch-q (q/from-angle-axis pitch yawed-x-axis)
+        pitched-y-axis (q/rotate pitch-q yawed-y-axis)
+        pitched-z-axis (q/rotate pitch-q z-axis)]
+    (->> shape
+         (rotate yaw z-axis)
+         ; (rotate pitch yawed-x-axis)
+         ; (rotate roll pitched-y-axis)
+         ; (rotate roll yawed-y-axis)
+         (rotate (- roll (/ π 2)) yawed-y-axis)
+         )))
+
+; (defn plane-align [plane-normal shape]
+;   (let [rot-y-axis-1 (rotate-to-vector x-axis plane-normal y-axis)
+;         rot-z-axis-1 (rotate-to-vector x-axis plane-normal z-axis)
+;         rot-z-axis-2 (rotate-to-vector rot-y-axis-1 plane-normal rot-z-axis-1)]
+;     (->> shape
+;          ((rotate-to-x plane-normal))
+;          ((rotate-to rot-y-axis-1 plane-normal))
+;          ((rotate-to rot-z-axis-2 plane-normal))
+;          )))
 
 (defn thumb-place [column row shape]
   (let [
@@ -859,25 +976,46 @@
 (def thumb-cluster
   (let [plane1 (v/vector 1 0 0)
         plane1-origin (v/vector 0 0 -1)
+        plane1-radius thumb-row-radius
         plane2 (v/normalize (v/vector 1 1 0))
-        plane2-origin (v/vector 0 0 1)]
+        plane2-origin (v/vector 0 0 1)
+        plane2-radius 35
+        plane3 (v/normalize (v/vector 1 1 1))
+        plane3-origin (v/normalize (v/vector 0.5 0.5 -1))
+        plane3-radius 60]
     (apply union
            (concat
              ; (for [row rows] (thumb-place 0 row single-key-pcb))
              (for [row (range 0 28)]
-               (circle-embed plane1 plane1-origin thumb-row-radius mount-width row single-key-pcb))
+               (circle-embed plane1 plane1-origin plane1-radius mount-width row single-key-pcb))
+             ; [(circle-embed-plane plane1 plane1-radius)]
+
              (for [row (range 0 12)]
                (->> single-key-pcb
-                    (rotate (/ π 4) [0 0 1])
-                    (circle-embed plane2 plane2-origin 35 mount-width row)))
+                    (circle-embed plane2 plane2-origin plane2-radius mount-width row)))
+
+             [(circle-embed-plane plane2 plane2-radius)]
+
+             (for [row (range 0 20)]
+               (->> single-key-pcb
+                    ; (rotate (/ π 4) [0 1 0])
+                    ; (rotate (/ π 4) [0 0 1])
+                    (circle-embed plane3 plane3-origin plane3-radius mount-width row)))
+
+             [(plane-align plane3 single-key-pcb)]
+
+             ; [(rotate-to-x plane3) single-key-pcb)]
+             [(circle-embed-plane plane3 plane3-radius)]
+
              ))))
 
 ; My Hacks: a template for moulding a PCB, maybe?
+; (def model-pcb-mould-right (plane-align (v/vector 1 1 1) single-key-pcb))
 (def model-pcb-mould-right (union
-                       key-holes
-                       key-pcb-mould
-                       key-pcb-connectors
-                       pcb-thumb
+                       ; key-holes
+                       ; key-pcb-mould
+                       ; key-pcb-connectors
+                       ; pcb-thumb
                        thumb-cluster
                        thumb
                        ))
