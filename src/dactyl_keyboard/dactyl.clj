@@ -946,6 +946,33 @@
          (rotate (* θ index) plane-normal)
          )))
 
+; semimajor axis, semiminor axis, angle of the starting point parametrically
+(defn ellipse-chord-next-point [a b target-chord-length initial-θ]
+  (let [get-x (fn [θ] (* a (Math/cos θ)))
+        get-y (fn [θ] (* b (Math/sin θ)))
+        get-coords (fn [θ] [(get-x θ) (get-y θ)])
+        chord-length (fn [α β] (distance (get-coords α) (get-coords β)))
+        ; binary search
+        improve (fn [[lower-bound upper-bound θ]]
+                  (let [d (chord-length initial-θ θ)]
+                    (if (<= d target-chord-length)
+                      [θ upper-bound (+ θ (/ (- upper-bound θ) 2))] 
+                      [lower-bound θ (- θ (/ (- θ lower-bound) 2))]
+                       )))
+        initial-guess (+ initial-θ π)
+        improvements (iterate improve [initial-θ (+ initial-θ (* 2 π)) initial-guess])
+        terminate (fn [[_ _ α] [_ _ β]]
+                    (or
+                      (= α β)
+                      (< (Math/abs (- α β)) 1e-10)
+                      ))]
+
+    (reduce #(if (terminate %1 %2) (reduced %2) %2) improvements)
+    ))
+
+; (defn ellipse-embed [a b shape]
+
+
 (defn thumb-place [column row shape]
   (let [
         β (chord-θ thumb-row-radius mount-width)
@@ -1031,23 +1058,6 @@
                                     (line [0 0 0] [30 0 0])
                                     (line [0 0 0] [0 30 0])
                                     (color [255 0 0 255] (line [0 0 0] [0 -30 0]))))
-              (->> single-key-pcb
-                   (translate [0 0 (- plane3-radius)])
-                   )
-              (->> single-key-pcb
-                   (translate [0 0 (- plane3-radius)])
-                   (plane-align plane3)
-                   )
-              (->> single-key-pcb
-                   (translate [0 0 (- plane3-radius)])
-                   (plane-align plane3)
-                   (rotate π plane3)
-                   )
-              (->> single-key-pcb
-                   (translate [0 0 (- plane3-radius)])
-                   (plane-align plane3)
-                   (rotate (* 2 π) plane3)
-                   )
               ]
 
              (for [row (range 0 26)]
