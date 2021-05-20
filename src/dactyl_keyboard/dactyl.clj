@@ -1,6 +1,6 @@
 (ns dactyl-keyboard.dactyl
   (:refer-clojure :exclude [use import])
-  (:require [clojure.core.matrix :refer [array matrix mmul]]
+  (:require [clojure.core.matrix :refer [array matrix mmul distance]]
             [scad-clj.scad :refer :all]
             [scad-clj.model :refer :all]
             [unicode-math.core :refer :all]
@@ -834,10 +834,13 @@
 (def z-axis (v/vector 0 0 1))
 
 (defn angle-between [v1 v2]
-  (->> (v/cross (v/normalize v1) (v/normalize v2))
-       (v/magnitude)
-       (Math/asin)
-       ))
+  (let [mag-v1 (v/magnitude v1)
+        mag-v2 (v/magnitude v2)
+        denom  (* mag-v1 mag-v2)
+        numer  (v/dot v1 v2)]
+    (->> (/ numer denom)
+         Math/acos
+         )))
 
 (def angle-to-x (partial angle-between x-axis))
 (def angle-to-y (partial angle-between y-axis))
@@ -907,6 +910,24 @@
        ; ((rotate-to-z plane-normal))
        )))
 
+(defn plane-align [plane-normal shape]
+  (let [x-y-projection (v/vector (get plane-normal 0) (get plane-normal 1) 0)
+        yaw-angle (angle-between x-axis x-y-projection)
+        ; offset the angle by 2π if the rotation should be more than π radians
+        ; (90 degrees)
+        yaw-α (if (<= 0 (get plane-normal 1)) yaw-angle (- (* 2 π) yaw-angle))
+        yaw-q (q/from-angle-axis yaw-α z-axis)
+        yawed-x-axis (q/rotate yaw-q x-axis)
+        roll-angle (angle-between yawed-x-axis plane-normal)
+        ; offset the angle by 2π if the rotation should be more than π radians
+        ; (90 degrees)
+        roll-β (if (<= 0 (get plane-normal 2)) roll-angle (- (* 2 π) roll-angle))
+        yawed-y-axis (q/rotate yaw-q (v/vector 0 -1 0))]
+    (->> shape
+         (rotate yaw-α z-axis)
+         (rotate roll-β yawed-y-axis)
+         )))
+
 ; embeds the shape in the perimeter of a circle on the plane with the given radius.
 ; TODO: shoud we rotate the shape into the orientation around the correct axis in this
 ; function, or leave that up to the caller? ⁻\_(ツ)_/⁻
@@ -917,44 +938,13 @@
         rot-z-axis-1 (rotate-to-vector x-axis plane-normal z-axis)
         rot-z-axis-2 (rotate-to-vector rot-y-axis-1 plane-normal rot-z-axis-1)]
     (->> shape
+         (translate [0 0 (- radius)])
          (plane-align plane-normal)
          ; ((rotate-to rot-y-axis-1 plane-normal))
          ; ((rotate-to rot-z-axis-2 plane-normal))
-         (translate to-origin)
+         ; (translate to-origin)
          (rotate (* θ index) plane-normal)
          )))
-
-(defn plane-align [plane-normal shape]
-  (let [x-y-projection (v/vector (get plane-normal 0) (get plane-normal 1) 0)
-        yaw (angle-between x-axis x-y-projection)
-        yaw-q (q/from-angle-axis yaw z-axis)
-        y-z-projection (v/vector 0 (get plane-normal 1) (get plane-normal 2))
-        pitch (angle-between y-axis y-z-projection)
-        x-z-projection (v/vector (get plane-normal 0) 0 (get plane-normal 2))
-        roll (angle-between z-axis x-z-projection)
-        yawed-y-axis (q/rotate yaw-q y-axis)
-        yawed-x-axis (q/rotate yaw-q x-axis)
-        ; z axis doesn't change during yaw.
-        pitch-q (q/from-angle-axis pitch yawed-x-axis)
-        pitched-y-axis (q/rotate pitch-q yawed-y-axis)
-        pitched-z-axis (q/rotate pitch-q z-axis)]
-    (->> shape
-         (rotate yaw z-axis)
-         ; (rotate pitch yawed-x-axis)
-         ; (rotate roll pitched-y-axis)
-         ; (rotate roll yawed-y-axis)
-         (rotate (- roll (/ π 2)) yawed-y-axis)
-         )))
-
-; (defn plane-align [plane-normal shape]
-;   (let [rot-y-axis-1 (rotate-to-vector x-axis plane-normal y-axis)
-;         rot-z-axis-1 (rotate-to-vector x-axis plane-normal z-axis)
-;         rot-z-axis-2 (rotate-to-vector rot-y-axis-1 plane-normal rot-z-axis-1)]
-;     (->> shape
-;          ((rotate-to-x plane-normal))
-;          ((rotate-to rot-y-axis-1 plane-normal))
-;          ((rotate-to rot-z-axis-2 plane-normal))
-;          )))
 
 (defn thumb-place [column row shape]
   (let [
@@ -973,6 +963,29 @@
          ; (translate [-52 -45 40])
        )))
 
+(def thumb-test (cube 15 10 5))
+
+;copy pasta from source code
+(def line-radius 1)
+(defn line
+  "This function will use all the fancy to draw a line from point A to
+  point B."
+  [from to]
+  (if (= from to)
+    (sphere line-radius)
+    (let [diff (map - to from)
+          norm (distance from to)
+          rotate-angle (Math/acos (/ (last diff) norm))
+          rotate-axis [(- (nth diff 1)) (nth diff 0) 0]]
+      (union
+       (sphere line-radius)
+       (translate [0 0 norm]
+                  (sphere line-radius))
+       (->> (cylinder line-radius norm)
+         (translate [0 0 (/ norm 2)])
+         (rotate rotate-angle rotate-axis)
+         (translate from))))))
+
 (def thumb-cluster
   (let [plane1 (v/vector 1 0 0)
         plane1-origin (v/vector 0 0 -1)
@@ -980,12 +993,16 @@
         plane2 (v/normalize (v/vector 1 1 0))
         plane2-origin (v/vector 0 0 1)
         plane2-radius 35
-        plane3 (v/normalize (v/vector 1 1 1))
+        plane3 (v/normalize (v/vector -3 -7 11))
         plane3-origin (v/normalize (v/vector 0.5 0.5 -1))
-        plane3-radius 60]
+        plane3-radius 60
+        plane4 (v/normalize (v/vector -3 7 -5))
+        plane4-origin (v/normalize (perpendicular-vector plane4))
+        ; plane4-origin (v/normalize (v/vector -3 0 -7))
+        plane4-radius 75]
     (apply union
            (concat
-             ; (for [row rows] (thumb-place 0 row single-key-pcb))
+             (for [row rows] (thumb-place 0 row single-key-pcb))
              (for [row (range 0 28)]
                (circle-embed plane1 plane1-origin plane1-radius mount-width row single-key-pcb))
              ; [(circle-embed-plane plane1 plane1-radius)]
@@ -994,7 +1011,7 @@
                (->> single-key-pcb
                     (circle-embed plane2 plane2-origin plane2-radius mount-width row)))
 
-             [(circle-embed-plane plane2 plane2-radius)]
+             ; [(circle-embed-plane plane2 plane2-radius)]
 
              (for [row (range 0 20)]
                (->> single-key-pcb
@@ -1002,10 +1019,41 @@
                     ; (rotate (/ π 4) [0 0 1])
                     (circle-embed plane3 plane3-origin plane3-radius mount-width row)))
 
-             [(plane-align plane3 single-key-pcb)]
 
              ; [(rotate-to-x plane3) single-key-pcb)]
-             [(circle-embed-plane plane3 plane3-radius)]
+             ; [(circle-embed-plane plane3 plane3-radius)]
+
+             [
+              (line [0 0 0] (v/scale (v/into-vector plane3) 100))
+              
+              (plane-align plane3 (union
+                                    single-key-pcb
+                                    (line [0 0 0] [30 0 0])
+                                    (line [0 0 0] [0 30 0])
+                                    (color [255 0 0 255] (line [0 0 0] [0 -30 0]))))
+              (->> single-key-pcb
+                   (translate [0 0 (- plane3-radius)])
+                   )
+              (->> single-key-pcb
+                   (translate [0 0 (- plane3-radius)])
+                   (plane-align plane3)
+                   )
+              (->> single-key-pcb
+                   (translate [0 0 (- plane3-radius)])
+                   (plane-align plane3)
+                   (rotate π plane3)
+                   )
+              (->> single-key-pcb
+                   (translate [0 0 (- plane3-radius)])
+                   (plane-align plane3)
+                   (rotate (* 2 π) plane3)
+                   )
+              ]
+
+             (for [row (range 0 26)]
+               (->> single-key-pcb
+                    ; (translate [0 0 (- plane4-radius)])
+                    (circle-embed plane4 plane4-origin plane4-radius mount-width row)))
 
              ))))
 
