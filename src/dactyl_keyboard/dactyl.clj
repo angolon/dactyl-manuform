@@ -6,6 +6,7 @@
             [unicode-math.core :refer :all]
             [euclidean.math.vector :as v]
             [euclidean.math.quaternion :as q]
+            [dactyl-keyboard.dactyl.ellipse :as e]
             ))
 
 
@@ -946,33 +947,6 @@
          (rotate (* θ index) plane-normal)
          )))
 
-; semimajor axis, semiminor axis, angle of the starting point parametrically
-(defn ellipse-chord-next-point [a b target-chord-length initial-θ]
-  (let [get-x (fn [θ] (* a (Math/cos θ)))
-        get-y (fn [θ] (* b (Math/sin θ)))
-        get-coords (fn [θ] [(get-x θ) (get-y θ)])
-        chord-length (fn [α β] (distance (get-coords α) (get-coords β)))
-        ; binary search
-        improve (fn [[lower-bound upper-bound θ]]
-                  (let [d (chord-length initial-θ θ)]
-                    (if (<= d target-chord-length)
-                      [θ upper-bound (+ θ (/ (- upper-bound θ) 2))] 
-                      [lower-bound θ (- θ (/ (- θ lower-bound) 2))]
-                       )))
-        initial-guess (+ initial-θ π)
-        improvements (iterate improve [initial-θ (+ initial-θ (* 2 π)) initial-guess])
-        terminate (fn [[_ _ α] [_ _ β]]
-                    (or
-                      (= α β)
-                      (< (Math/abs (- α β)) 1e-10)
-                      ))]
-
-    (reduce #(if (terminate %1 %2) (reduced %2) %2) improvements)
-    ))
-
-; (defn ellipse-embed [a b shape]
-
-
 (defn thumb-place [column row shape]
   (let [
         β (chord-θ thumb-row-radius mount-width)
@@ -1065,6 +1039,10 @@
                     ; (translate [0 0 (- plane4-radius)])
                     (circle-embed plane4 plane4-origin plane4-radius mount-width row)))
 
+             (map
+               (partial e/embed (e/->Ellipse 140 60) mount-width (rotate (/ π 2) [-1 0 0] single-key-pcb))
+               (range 0 25)
+               )
              ))))
 
 ; My Hacks: a template for moulding a PCB, maybe?
