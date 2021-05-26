@@ -1003,17 +1003,6 @@
         plane4-radius 75]
     (apply union
            (concat
-             (for [row rows] (thumb-place 0 row single-key-pcb))
-             (for [row (range 0 28)]
-               (circle-embed plane1 plane1-origin plane1-radius mount-width row single-key-pcb))
-             ; [(circle-embed-plane plane1 plane1-radius)]
-
-             (for [row (range 0 12)]
-               (->> single-key-pcb
-                    (circle-embed plane2 plane2-origin plane2-radius mount-width row)))
-
-             ; [(circle-embed-plane plane2 plane2-radius)]
-
              (for [row (range 0 20)]
                (->> single-key-pcb
                     ; (rotate (/ π 4) [0 1 0])
@@ -1038,11 +1027,18 @@
                (->> single-key-pcb
                     ; (translate [0 0 (- plane4-radius)])
                     (circle-embed plane4 plane4-origin plane4-radius mount-width row)))
-
-             (map
-               (partial e/embed (e/->Ellipse 140 60) mount-width (rotate (/ π 2) [-1 0 0] single-key-pcb))
-               (range 0 25)
-               )
+             (let [shape (->> single-key-pcb
+                              (translate [0 0 -15])
+                              (union single-key-pcb)
+                              (rotate (/ π 2) [-1 0 0])
+                              )]
+               (->> (map
+                      (partial e/embed (e/->Ellipse 140 60) mount-width shape)
+                      (range 0 25))
+                    (apply union)
+                    (plane-align plane3)
+                    (vector)
+                 ))
              ))))
 
 ; My Hacks: a template for moulding a PCB, maybe?
