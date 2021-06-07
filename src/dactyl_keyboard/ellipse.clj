@@ -66,9 +66,9 @@
         )
     ))
 
-(defn embed [ellipse length shape index]
+(defn embed [ellipse initial-θ length shape index]
   (let [chordfn (partial chord-next-point ellipse length)
-        chords (iterate chordfn (- (/ π 2))) ; start at -90 degrees so we can translate the input directly down on the y-axis? ⁻\_(ツ)_/⁻
+        chords (iterate chordfn initial-θ)
         [α β] (take 2 (drop index chords)) ; the two angles to the points on the ellpise
         [coordinates-a coordinates-b] (chord ellipse α β)
         chord-vector (sub coordinates-b coordinates-a)
@@ -76,8 +76,7 @@
         midpoint (chord-midpoint ellipse α β)
         ]
       (->> shape
-           ; rotate about negative y-axis (angle specified
-           ; as counter-clockwise from x, because maths.
+           ; rotate about z-axis to match the angle of the chord.
            (rotate rotation [0 0 1])
            (translate midpoint)
            )

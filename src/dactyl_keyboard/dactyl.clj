@@ -1,6 +1,6 @@
 (ns dactyl-keyboard.dactyl
   (:refer-clojure :exclude [use import])
-  (:require [clojure.core.matrix :refer [array matrix mmul distance]]
+  (:require [clojure.core.matrix :refer [add array matrix mmul distance]]
             [scad-clj.scad :refer :all]
             [scad-clj.model :refer :all]
             [unicode-math.core :refer :all]
@@ -57,7 +57,7 @@
 
 ; Angus' hax variables
 (def pcb-z-clearance 5)
-(def pcb-thickness 3)
+(def pcb-thickness 1.5)
 
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;; General variables ;;
@@ -79,8 +79,6 @@
 (def plate-thickness 4)
 (def mount-width (+ keyswitch-width 3))
 (def mount-height (+ keyswitch-height 3))
-(def pcb-key-width mount-width)
-(def pcb-key-height mount-height)
 
 (def single-plate
   (let [top-wall (->> (cube (+ keyswitch-width 3) 1.5 plate-thickness)
@@ -118,7 +116,6 @@
                                         (extrude-linear {:height 0.1 :twist 0 :convexity 0})
                                         (translate [0 0 12])))]
                  (->> key-cap
-                      (translate [0 0 (+ 5 plate-thickness)])
                       (color [220/255 163/255 163/255 1])))
              2 (let [bl2 (/ sa-double-length 2)
                      bw2 (/ 18.25 2)
@@ -129,7 +126,6 @@
                                         (extrude-linear {:height 0.1 :twist 0 :convexity 0})
                                         (translate [0 0 12])))]
                  (->> key-cap
-                      (translate [0 0 (+ 5 plate-thickness)])
                       (color [127/255 159/255 127/255 1])))
              1.5 (let [bl2 (/ 18.25 2)
                        bw2 (/ 28 2)
@@ -140,17 +136,117 @@
                                           (extrude-linear {:height 0.1 :twist 0 :convexity 0})
                                           (translate [0 0 12])))]
                    (->> key-cap
-                        (translate [0 0 (+ 5 plate-thickness)])
                         (color [240/255 223/255 175/255 1])))})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; PCB shapes and offset functions ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; Approximate model of switch, for visualisation (and maybe even collision detection)
+; purposes
+(def cherry-switch-pin-height 3.3)
+(def cherry-switch-pin (->> (cylinder [0.75 0.75] cherry-switch-pin-height)
+                            (translate [0 0 (/ cherry-switch-pin-height 2)])
+                            (color [203/255 109/255 81/255 1])))
+
+(def cherry-switch-body-color [0.2 0.2 0.2 1])
+(def cherry-switch-pcb-centre-column
+  (let [top-cylinder-height 2.25
+        top-cylinder-offset (- cherry-switch-pin-height top-cylinder-height)
+        top-cylinder (->> (cylinder [2 2] top-cylinder-height)
+                         (translate [0 0 (+ (/ top-cylinder-height 2) top-cylinder-offset)]))
+        bottom-disc (->> (circle 1)
+                         (extrude-linear {:height 0.1 :twist 0 :convexivity 0})
+                         (translate [0 0 0.05]))]
+    (->> bottom-disc
+         (hull top-cylinder)
+         (color cherry-switch-body-color)
+         )))
+
+(def cherry-switch-underside
+  (let [underside-height 5.0
+        top-cube-height 1.0
+        top-cube (->> (cube keyswitch-width keyswitch-width top-cube-height)
+                      (translate [0 0 (- underside-height (/ top-cube-height 2))]))
+        bottom-cube-width (- keyswitch-width 2)
+        bottom-cube (->> (cube bottom-cube-width bottom-cube-width 0.1)
+                         (translate [0 0 0.05]))
+        ]
+  (->> bottom-cube
+       (hull top-cube)
+       (color cherry-switch-body-color)
+       )))
+
+(def cherry-switch-border
+  (let [border-height 0.6
+        border-width 15.6
+        gap-width 7.6
+        ; make the height and length of the gaps bigger to eliminate weird artifacting?
+        border-gaps (->> (cube gap-width (+ 1 border-width) (* 2 border-height))
+                         (union (cube (+ 1 border-width) gap-width (* 2 border-height))))
+        border-centre (cube keyswitch-width keyswitch-width border-height)
+        border-corners (->> (cube border-width border-width border-height)
+                            (#(difference % border-gaps)))
+        ]
+    (->> border-centre
+         (union border-corners)
+         (translate [0 0 (/ border-height 2)])
+         (color cherry-switch-body-color)
+         )))
+
+(def cherry-switch-topside
+  (let [topside-height 6
+        topside-width (- keyswitch-width 3)
+        bottom-cube (->> (cube keyswitch-width keyswitch-width 0.1)
+                      (translate [0 0 0.05]))
+        top-cube (->> (cube topside-width topside-width 0.1)
+                      (translate [0 0 (- topside-height 0.05)]))
+        ]
+    (->> top-cube
+         (hull bottom-cube)
+         (color cherry-switch-body-color)
+         )))
+
+(def cherry-switch-stem
+  (let [height 3.6
+        width 4
+        length 1
+        wall-1 (cube width length height)
+        wall-2 (cube length width height)]
+    (->> wall-1
+         (union wall-2)
+         (translate [0 0 (/ height 2)])
+         (color [67/255 5/255 65/255 1])
+        ))) 
+
+(def cherry-switch
+  (let [spec-gridline-width 1.27
+        pin-1 (translate [(* -3 spec-gridline-width) (* 2 spec-gridline-width) 0] cherry-switch-pin)
+        pin-2 (translate [(* 2 spec-gridline-width) (* 4 spec-gridline-width) 0] cherry-switch-pin)
+        pcb-interface (union cherry-switch-pcb-centre-column pin-1 pin-2)]
+    (union
+      pcb-interface
+      (translate [0 0 cherry-switch-pin-height] cherry-switch-underside)
+      (translate [0 0 (+ cherry-switch-pin-height 5)] cherry-switch-border)
+      (translate [0 0 (+ cherry-switch-pin-height 5 0.6)] cherry-switch-topside)
+      (translate [0 0 (+ 11.6 cherry-switch-pin-height)] cherry-switch-stem)
+      )))
+
+; (def cherry-switch
+;   (let [pin (->>cylinder 
 ;; Shape of the flat section of the pcb for each key
+(def pcb-color [9/255 77/255 28/255 1])
+(def keycap-space-buffer 0.5)
+(def pcb-key-width (+ sa-length keycap-space-buffer))
+
 (def single-key-pcb
-  (cube pcb-key-width pcb-key-height pcb-thickness)
-  )
+  (let [switch-offset (- cherry-switch-pin-height pcb-thickness)]
+    (->> (cube pcb-key-width pcb-key-width pcb-thickness)
+         (translate [0 0 (/ pcb-thickness 2)])
+         (translate [0 0 switch-offset])
+         (#(difference % cherry-switch))
+         (color pcb-color)
+         )))
 
 ;; translate a pcb shape down in the z-axis. Do this BEFORE
 ;; placing relative to a key?
@@ -966,6 +1062,65 @@
 
 (def thumb-test (cube 15 10 5))
 
+; plane-normal describes the plane in which the finger moves.
+; origin of to-knuckle at approximately at the inner wrist...?
+(defrecord Finger [length width semiminor plane-normal to-knuckle-vector])
+(def index-finger (->Finger
+                    60 ;length
+                    15 ;width
+                    16.5 ;semiminor
+                    (v/normalize (v/vector 1 0.15 0.2)) ;plane-normal
+                    [5 70 23])) ;to-knuckle-vector
+
+(def middle-finger (->Finger
+                     67.5 ;length
+                     17.5 ; width
+                     21.25 ; semiminor
+                     (v/normalize (v/vector 1 0.1 0.1)) ;plane-normal
+                     [26 73 28])) ;to-knuckle-vector
+
+(def ring-finger (->Finger
+                     62.5 ;length
+                     17.5 ; width
+                     17 ; semiminor
+                     (v/normalize (v/vector 1 -0.1 -0.1)) ;plane-normal
+                     [52 71 25])) ;to-knuckle-vector
+
+(def pinky-finger (->Finger
+                     55 ;length
+                     17.5 ; width
+                     13 ; semiminor
+                     (v/normalize (v/vector 1 -0.2 -0.2)) ;plane-normal
+                     [73 69 20])) ;to-knuckle-vector
+
+(def switch-travel 4)
+(def switch-travel-buffer 1)
+(def ellipse-adjustment (+ sa-profile-key-height switch-travel switch-travel-buffer))
+(def initial-key-chord-angle (* π -0.75))
+(defn finger-key-place [finger shape-length shape row-idx]
+  (let [semimajor (+ ellipse-adjustment (/ (:length finger) 2))
+        semiminor (+ ellipse-adjustment (:semiminor finger))
+        ellipse (e/->Ellipse semimajor semiminor)
+        ; translate the ellipse so that, hypothetically, the ellipse we've
+        ; just used should approximately intersect the centre of this finger's
+        ; knuckle, at the angle π, (i.e. at y = 0, and x = -semimajor)
+        ; All the weasel words, because I'm making this up as I go along.
+        to-knuckle-translation (add [0 semimajor 0] (:to-knuckle-vector finger))]
+    (->> shape
+         ; The ellipse embedding does so in the x-y plane, but all the dactyl
+         ; code works in terms of rotations in y-z about the x-axis
+         ; so we need to pre-rotate the input shape to work with the ellipse
+         ; embedding, then rotate again to have the ellipse be in the y-z plane.
+         (rotate (/ π -2) [0 0 1])
+         (rotate (/ π -2) [1 0 0])
+         (#(e/embed ellipse initial-key-chord-angle shape-length % row-idx))
+         (rotate (/ π 2) [1 0 0])
+         (rotate (/ π 2) [0 0 1])
+         (plane-align (:plane-normal finger))
+         (translate to-knuckle-translation)
+         )
+  ))
+
 ;copy pasta from source code
 (def line-radius 1)
 (defn line
@@ -988,57 +1143,26 @@
          (translate from))))))
 
 (def thumb-cluster
-  (let [plane1 (v/vector 1 0 0)
-        plane1-origin (v/vector 0 0 -1)
-        plane1-radius thumb-row-radius
-        plane2 (v/normalize (v/vector 1 1 0))
-        plane2-origin (v/vector 0 0 1)
-        plane2-radius 35
-        plane3 (v/normalize (v/vector -3 -7 11))
-        plane3-origin (v/normalize (v/vector 0.5 0.5 -1))
-        plane3-radius 60
-        plane4 (v/normalize (v/vector -3 7 -5))
-        plane4-origin (v/normalize (perpendicular-vector plane4))
-        ; plane4-origin (v/normalize (v/vector -3 0 -7))
-        plane4-radius 75]
+  (let [key-cap (translate [0 0 (+ switch-travel 8.8)] (sa-cap 1))
+        translated-plate (translate [0 0 (- 8.3 plate-thickness)] single-plate)
+        key-assembly (union
+                       key-cap
+                       translated-plate
+                       cherry-switch
+                       single-key-pcb)
+        ]
     (apply union
            (concat
-             (for [row (range 0 20)]
-               (->> single-key-pcb
-                    ; (rotate (/ π 4) [0 1 0])
-                    ; (rotate (/ π 4) [0 0 1])
-                    (circle-embed plane3 plane3-origin plane3-radius mount-width row)))
-
-
-             ; [(rotate-to-x plane3) single-key-pcb)]
-             ; [(circle-embed-plane plane3 plane3-radius)]
-
-             [
-              (line [0 0 0] (v/scale (v/into-vector plane3) 100))
-              
-              (plane-align plane3 (union
-                                    single-key-pcb
-                                    (line [0 0 0] [30 0 0])
-                                    (line [0 0 0] [0 30 0])
-                                    (color [255 0 0 255] (line [0 0 0] [0 -30 0]))))
-              ]
-
-             (for [row (range 0 26)]
-               (->> single-key-pcb
-                    ; (translate [0 0 (- plane4-radius)])
-                    (circle-embed plane4 plane4-origin plane4-radius mount-width row)))
-             (let [shape (->> single-key-pcb
-                              (translate [0 0 -15])
-                              (union single-key-pcb)
-                              (rotate (/ π 2) [-1 0 0])
-                              )]
-               (->> (map
-                      (partial e/embed (e/->Ellipse 140 60) mount-width shape)
-                      (range 0 25))
-                    (apply union)
-                    (plane-align plane3)
-                    (vector)
+             [key-assembly]
+             (for [finger [index-finger middle-finger ring-finger pinky-finger]
+                   row rows]
+               (finger-key-place
+                 finger
+                 pcb-key-width
+                 key-assembly
+                 row
                  ))
+                  
              ))))
 
 ; My Hacks: a template for moulding a PCB, maybe?
