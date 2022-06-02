@@ -238,20 +238,48 @@
 (def pcb-color [9/255 77/255 28/255 1])
 (def keycap-space-buffer 0.5)
 (def pcb-key-width (+ sa-length keycap-space-buffer))
+(def pcb-offset (- cherry-switch-pin-height pcb-thickness))
 
 (def single-key-pcb
-  (let [switch-offset (- cherry-switch-pin-height pcb-thickness)]
-    (->> (cube pcb-key-width pcb-key-width pcb-thickness)
-         (translate [0 0 (/ pcb-thickness 2)])
-         (translate [0 0 switch-offset])
-         (#(difference % cherry-switch))
-         (color pcb-color)
-         )))
+  (->> (cube pcb-key-width pcb-key-width pcb-thickness)
+       (translate [0 0 (/ pcb-thickness 2)])
+       (translate [0 0 pcb-offset])
+       (#(difference % cherry-switch))
+       (color pcb-color)
+       ))
 
-;; translate a pcb shape down in the z-axis. Do this BEFORE
-;; placing relative to a key?
-(defn pcb-offset [shape-fn]
-        (translate [0 0 (- pcb-z-clearance)] shape-fn))
+(def pcb-web-thickness pcb-thickness)
+(def pcb-post-size 0.1)
+(def pcb-web-post (->> (cube pcb-post-size pcb-post-size pcb-web-thickness)
+                       (translate [0 0 (/ pcb-web-thickness 2)])
+                       (translate [0 0 pcb-offset])
+                       (color pcb-color)))
+
+(def pcb-post-adj (/ pcb-post-size 2))
+(def pcb-web-post-tr
+  (translate
+    [(- (/ pcb-key-width 2) pcb-post-adj)
+     (- (/ pcb-key-width 2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def pcb-web-post-tl
+  (translate
+    [(+ (/ pcb-key-width -2) pcb-post-adj)
+     (- (/ pcb-key-width 2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def pcb-web-post-bl
+  (translate
+    [(+ (/ pcb-key-width -2) pcb-post-adj)
+     (+ (/ pcb-key-width -2) pcb-post-adj)
+     0] pcb-web-post))
+
+(def pcb-web-post-br
+  (translate
+    [(- (/ pcb-key-width 2) pcb-post-adj)
+     (+ (/ pcb-key-width -2) pcb-post-adj)
+     0] pcb-web-post))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Placement Functions ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -336,16 +364,6 @@
            (->> single-plate
                 (key-place column row)))))
 
-(def key-pcb-mould
-  (apply union
-         (for [column columns
-               row rows
-               :when (or (.contains [2 3] column)
-                         (not= row lastrow))]
-           (->> single-key-pcb
-                (pcb-offset)
-                (key-place column row)))))
-
 (def caps
   (apply union
          (for [column columns
@@ -408,68 +426,6 @@
              (key-place column (inc row) web-post-tr)
              (key-place (inc column) row web-post-bl)
              (key-place (inc column) (inc row) web-post-tl))))))
-
-;; More of my hacks: connectors for the key pcb squares.
-
-(def pcb-web-thickness pcb-thickness)
-(def pcb-post-size 0.1)
-(def pcb-web-post (->> (cube pcb-post-size pcb-post-size pcb-web-thickness)
-                   (translate [0 0 (- pcb-z-clearance)])))
-
-(def pcb-post-adj (/ pcb-post-size 2))
-(def pcb-web-post-tr
-  (translate
-    [(- (/ pcb-key-width 2) pcb-post-adj)
-     (- (/ pcb-key-height 2) pcb-post-adj)
-     0] pcb-web-post))
-
-(def pcb-web-post-tl
-  (translate
-    [(+ (/ pcb-key-width -2) pcb-post-adj)
-     (- (/ pcb-key-height 2) pcb-post-adj)
-     0] pcb-web-post))
-
-(def pcb-web-post-bl
-  (translate
-    [(+ (/ pcb-key-width -2) pcb-post-adj)
-     (+ (/ pcb-key-height -2) pcb-post-adj)
-     0] pcb-web-post))
-
-(def pcb-web-post-br
-  (translate
-    [(- (/ pcb-key-width 2) pcb-post-adj)
-     (+ (/ pcb-key-height -2) pcb-post-adj)
-     0] pcb-web-post))
-
-(def key-pcb-connectors
-    (apply union
-           (concat
-            ;; Row connections
-            (for [column (range 0 (dec ncols))
-                  row (range 0 lastrow)]
-              (triangle-hulls
-               (key-place (inc column) row pcb-web-post-tl)
-               (key-place column row pcb-web-post-tr)
-               (key-place (inc column) row pcb-web-post-bl)
-               (key-place column row pcb-web-post-br)))
-
-            ;; Column connections
-            (for [column columns
-                  row (range 0 cornerrow)]
-              (triangle-hulls
-               (key-place column row pcb-web-post-bl)
-               (key-place column row pcb-web-post-br)
-               (key-place column (inc row) pcb-web-post-tl)
-               (key-place column (inc row) pcb-web-post-tr)))
-
-            ;; Diagonal connections
-            (for [column (range 0 (dec ncols))
-                  row (range 0 cornerrow)]
-              (triangle-hulls
-               (key-place column row pcb-web-post-br)
-               (key-place column (inc row) pcb-web-post-tr)
-               (key-place (inc column) row pcb-web-post-bl)
-               (key-place (inc column) (inc row) pcb-web-post-tl))))))
 
 ;;;;;;;;;;;;
 ;; Thumbs ;;
@@ -1064,49 +1020,59 @@
 
 ; plane-normal describes the plane in which the finger moves.
 ; origin of to-knuckle at approximately at the inner wrist...?
-(defrecord Finger [length width semiminor plane-normal to-knuckle-vector])
+(defrecord Finger [length width semiminor plane-normal to-first-key])
 (def index-finger (->Finger
-                    60 ;length
-                    15 ;width
-                    16.5 ;semiminor
-                    (v/normalize (v/vector 1 0.15 0.2)) ;plane-normal
-                    [5 70 23])) ;to-knuckle-vector
+                    79.9 ;length
+                    18.5 ;width
+                    50 ;semiminor
+                    (v/normalize (v/vector 1 0.15 0.1)) ;plane-normal
+                    ; [-11 0 0])) ;to-first-key
+                    [-11 60 12])) ; to-first-key
 
 (def middle-finger (->Finger
-                     67.5 ;length
+                     89 ;length
                      17.5 ; width
-                     21.25 ; semiminor
+                     74 ; semiminor
                      (v/normalize (v/vector 1 0.1 0.1)) ;plane-normal
-                     [26 73 28])) ;to-knuckle-vector
+                     ; [11 0 0])) ;to-first-key
+                     [12 55 6])) ;to-first-key
 
 (def ring-finger (->Finger
-                     62.5 ;length
+                     86 ;length
                      17.5 ; width
-                     17 ; semiminor
+                     57 ; semiminor
                      (v/normalize (v/vector 1 -0.1 -0.1)) ;plane-normal
-                     [52 71 25])) ;to-knuckle-vector
+                     [41 50 8])) ;to-first-key
 
 (def pinky-finger (->Finger
-                     55 ;length
+                     69 ;length
                      17.5 ; width
-                     13 ; semiminor
+                     44 ; semiminor
                      (v/normalize (v/vector 1 -0.2 -0.2)) ;plane-normal
-                     [73 69 20])) ;to-knuckle-vector
+                     [63 40 15])) ;to-first-key
+
+(def fingers [index-finger middle-finger ring-finger pinky-finger])
 
 (def switch-travel 4)
 (def switch-travel-buffer 1)
-(def ellipse-adjustment (+ sa-profile-key-height switch-travel switch-travel-buffer))
+(def ellipse-adjustment (+ switch-travel switch-travel-buffer 6))
 (def initial-key-chord-angle (* π -0.75))
-(defn finger-key-place [finger shape-length shape row-idx]
-  (let [semimajor (+ ellipse-adjustment (/ (:length finger) 2))
-        semiminor (+ ellipse-adjustment (:semiminor finger))
+; assumes that the circumference of the ellipse should produce the chords which align with
+; the top of the object being embedded. In order to do this it translates the input shape
+; down in the z-axis by the provided height.
+; So, assuming my horrible model for how a finger moves actually works, this should produce
+; a thing where the finger naturally rests on the top of the object being placed.
+(defn finger-key-place [shape-height shape-length shape finger row-idx]
+  (let [semimajor (/ (* 4/3 (:length finger)) 2)
+        semiminor (:semiminor finger)
         ellipse (e/->Ellipse semimajor semiminor)
         ; translate the ellipse so that, hypothetically, the ellipse we've
         ; just used should approximately intersect the centre of this finger's
         ; knuckle, at the angle π, (i.e. at y = 0, and x = -semimajor)
         ; All the weasel words, because I'm making this up as I go along.
-        to-knuckle-translation (add [0 semimajor 0] (:to-knuckle-vector finger))]
+        to-knuckle-translation (add [0 0 semiminor] (:to-first-key finger))]
     (->> shape
+         (translate [0 0 (- shape-height)])
          ; The ellipse embedding does so in the x-y plane, but all the dactyl
          ; code works in terms of rotations in y-z about the x-axis
          ; so we need to pre-rotate the input shape to work with the ellipse
@@ -1116,6 +1082,7 @@
          (#(e/embed ellipse initial-key-chord-angle shape-length % row-idx))
          (rotate (/ π 2) [1 0 0])
          (rotate (/ π 2) [0 0 1])
+         (translate [0 semimajor 0])
          (plane-align (:plane-normal finger))
          (translate to-knuckle-translation)
          )
@@ -1144,32 +1111,68 @@
 
 (def thumb-cluster
   (let [key-cap (translate [0 0 (+ switch-travel 8.8)] (sa-cap 1))
+  ; (let [key-cap (translate [0 0 8.8] (sa-cap 1))
         translated-plate (translate [0 0 (- 8.3 plate-thickness)] single-plate)
         key-assembly (union
                        key-cap
                        translated-plate
                        cherry-switch
                        single-key-pcb)
+        key-assembly-height (+ sa-profile-key-height
+                               switch-travel
+                               switch-travel-buffer
+                               8.8) ; hacks... should be derived from switch spec.
+        pseudo-height (- key-assembly-height ellipse-adjustment)
+        pseudo-width (+ keycap-space-buffer sa-length)
+        place-shape (partial finger-key-place pseudo-height pseudo-width)
+        pcb-hull (comp (partial color pcb-color) triangle-hulls)
         ]
     (apply union
            (concat
-             [key-assembly]
-             (for [finger [index-finger middle-finger ring-finger pinky-finger]
+             [key-assembly pcb-web-post-tl pcb-web-post-tr pcb-web-post-bl pcb-web-post-br]
+             ; [(translate [0 0 (- pseudo-height)] key-assembly)]
+
+             ; full assembly of key switch, plate, pcb, keycap.
+             (for [finger fingers
                    row rows]
-               (finger-key-place
-                 finger
-                 pcb-key-width
-                 key-assembly
-                 row
-                 ))
+               (place-shape key-assembly finger row)
+               )
                   
-             ))))
+            ;; Row connections
+            (for [[f1 f2] (partition 2 1 fingers)
+                  row rows]
+              (pcb-hull
+                (place-shape pcb-web-post-tl f2 row)
+                (place-shape pcb-web-post-tr f1 row)
+                (place-shape pcb-web-post-bl f2 row)
+                (place-shape pcb-web-post-br f1 row)
+                ))
+
+            ;; Column connections
+            (for [finger fingers
+                  row (range 0 lastrow)]
+              (pcb-hull
+                (place-shape pcb-web-post-tl finger row)
+                (place-shape pcb-web-post-tr finger row)
+                (place-shape pcb-web-post-bl finger (inc row))
+                (place-shape pcb-web-post-br finger (inc row))
+                ))
+
+            ; ;; Diagonal connections
+            (for [[f1 f2] (partition 2 1 fingers)
+                  [r1 r2] (partition 2 1 rows)]
+              (pcb-hull
+                (place-shape pcb-web-post-tr f1 r1)
+                (place-shape pcb-web-post-tl f2 r1)
+                (place-shape pcb-web-post-br f1 r2)
+                (place-shape pcb-web-post-bl f2 r2)
+                ))
+            ))))
 
 ; My Hacks: a template for moulding a PCB, maybe?
 ; (def model-pcb-mould-right (plane-align (v/vector 1 1 1) single-key-pcb))
 (def model-pcb-mould-right (union
                        ; key-holes
-                       ; key-pcb-mould
                        ; key-pcb-connectors
                        ; pcb-thumb
                        thumb-cluster
