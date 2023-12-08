@@ -67,6 +67,13 @@
 ; (defn radial-scaphoid-column [wrist]
 ;   (
 
+
+(defn catenary-a [width height]
+  (/ (- (* width width) (* height height)) (* 2 height)))
+
+; s = arc-length, a = scale
+(defn catenary-derivative [s a] (/ s a))
+
 (defn render-hand [hand]
   (let [
         thumb (:thumb hand)
@@ -77,15 +84,30 @@
                             (translate (thumb-wrist-attachment thumb wrist)))
         rendered-wrist (->> (cube (:width wrist) (:height wrist) (:length wrist))
                             (translate [(/ (:width wrist) 2) (/ (:height wrist) 2) (/ (:length wrist) 2)]))
+        incremental-knuckle-distance [0 35 28 23]
+        cumulative-knuckle-distance (reductions + incremental-knuckle-distance)
+        carpal-arch-width 89
+        carpal-arch-a (catenary-a 80 53)
+        carpal-arch (->> (catenary carpal-arch-a)
+                         (rotate π [0 0 1])
+                         (translate [(/ carpal-arch-width 2) (* 2 carpal-arch-a) 0])
+                         )
+        metacarpal-arch-height 53
+        metacarpal-arch-a (catenary-a 140 metacarpal-arch-height)
+        metacarpal-arch (->> (catenary metacarpal-arch-a)
+                             (rotate π [0 0 1])
+                             (translate [0 (+ metacarpal-arch-a metacarpal-arch-height) 87])
+                             )
         render-finger (fn [idx finger]
                         (let [attachment (finger-wrist-attachment hand idx)]
                           (->> (cylinder (/ (:width finger) 2) (:metacarpal finger))
                                (translate [(/ (:width finger) 2) 0 (/ (:metacarpal finger) 2)])
                                (translate attachment))))
 
+
         ]
     (apply union
-           (concat [rendered-wrist rendered-thumb (catenary 40)]
+           (concat [rendered-wrist rendered-thumb carpal-arch metacarpal-arch]
                    (map-indexed render-finger fingers)
                    ))))
 
